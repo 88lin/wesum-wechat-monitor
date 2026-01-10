@@ -1,0 +1,27 @@
+{
+  "rss": {
+    "url": "http://localhost:4000/feeds/all.atom",
+    "update_interval": 3600
+  },
+  "ai": {
+    "provider": "qwen",
+    "api_key": "YOUR_QWEN_API_KEY_HERE",
+    "model": "qwen-turbo",
+    "max_tokens": 1000,
+    "summary_prompt": "请将以下公众号文章生成总结，要求：\n\n1. 结构化输出：使用 Emoji 图标作为段落标记（如🎯、🔄、🤖等）\n2. 分段清晰：每个大段有明确的主题标题\n3. 深度解析：不是简单摘要点，而是保留关键信息和数据的深度解析\n4. 格式规范：\n   - 使用分级标题（一、二、三）\n   - 关键数据用加粗标记\n   - 包含具体案例和细节\n5. 内容长度：控制在500字以内\n6. 补充细节：最后补充关键细节和背景信息\n\n文章标题：{title}\n\n文章内容：\n{content}\n\n请生成总结："
+  },
+  "push": {
+    "provider": "serverchan",
+    "sendkey": "YOUR_SERVERCHAN_SENDKEY_HERE",
+    "title_prefix": "【WeSum】"
+  },
+  "storage": {
+    "seen_articles_file": "data/seen_articles.json",
+    "log_file": "logs/wesum.log"
+  },
+  "filters": {
+    "max_articles_per_run": null,
+    "max_hours": 24,
+    "min_summary_length": 50
+  }
+}

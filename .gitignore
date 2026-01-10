@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+venv/
+env/
+
+# 环境变量
+.env
+config.json
+
+# 数据文件
+data/
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# 项目文档（中间过程）
+docs/
+
+# Wewe-RSS 数据
+wewe-rss-data/
