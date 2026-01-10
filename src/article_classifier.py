@@ -64,7 +64,7 @@ class ArticleClassifier:
                 noise_level=self._get_noise_level(keyword_result['noise_type'])
             )
 
-        # 步骤3：否则返回正常文章（后续会调用 AI 进行精确判断）
+        # 步骤3：正常文章，返回空标签（后续由 AI 生成）
         return {
             "categories": [],
             "is_noise": False,

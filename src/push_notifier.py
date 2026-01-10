@@ -5,6 +5,8 @@
 
 import requests
 from typing import List, Dict
+from datetime import datetime
+import time
 
 
 class PushNotifier:
@@ -27,17 +29,19 @@ class PushNotifier:
         推送单篇文章总结（支持正常文章、干扰文章、公关文章）
 
         Args:
-            article: 文章信息（包含 title, summary, link, author, categories, noise_type, noise_level）
+            article: 文章信息（包含 title, summary, link, author, categories, noise_type, noise_level, published）
 
         Returns:
             是否成功
         """
-        # 标题格式：【公众号名】文章标题
+        # 标题格式：【公众号名】文章标题【-YYYYMMDDHHMM】
         author = article.get('author', '')
+        published_time = self._format_published_time(article.get('published', ''))
+
         if author and author != 'Unknown':
-            title = f"【{author}】{article['title']}"
+            title = f"【{author}】{article['title']}{published_time}"
         else:
-            title = f"{self.title_prefix} {article['title']}"
+            title = f"{self.title_prefix} {article['title']}{published_time}"
 
         # 根据文章类型生成不同的推送内容
         content = self._format_content(article)
@@ -91,6 +95,54 @@ class PushNotifier:
         }
         return type_names.get(noise_type, noise_type)
 
+    def _format_published_time(self, published: str) -> str:
+        """
+        格式化发布时间为 -YYYY-MM-DD HH:MM 格式
+
+        Args:
+            published: RSS 中的 published 字段（如 "Sat, 11 Jan 2026 10:30:00 GMT"）
+
+        Returns:
+            格式化后的时间字符串（如 "-2026-01-11 10:30"），如果解析失败返回空字符串
+        """
+        if not published or published == 'Unknown':
+            return ""
+
+        try:
+            # 尝试解析 RSS 时间格式（RFC 2822）
+            # feedparser 会将时间解析为 time.struct_time
+            import feedparser
+
+            # 先尝试用 feedparser 解析
+            parsed = feedparser.parse(published)
+            if hasattr(parsed, 'entries') and len(parsed.entries) > 0:
+                time_struct = parsed.entries[0].get('published_parsed')
+                if time_struct:
+                    dt = datetime.fromtimestamp(time.mktime(time_struct))
+                    return f"-{dt.strftime('%Y-%m-%d %H:%M')}"
+
+            # 如果 feedparser 解析失败，尝试其他常见格式
+            # RFC 2822 格式：Sat, 11 Jan 2026 10:30:00 GMT
+            try:
+                dt = datetime.strptime(published, '%a, %d %b %Y %H:%M:%S %Z')
+                return f"-{dt.strftime('%Y-%m-%d %H:%M')}"
+            except:
+                pass
+
+            # ISO 8601 格式：2026-01-11T10:30:00Z
+            try:
+                dt = datetime.fromisoformat(published.replace('Z', '+00:00'))
+                return f"-{dt.strftime('%Y-%m-%d %H:%M')}"
+            except:
+                pass
+
+            # 如果所有解析都失败，返回空字符串
+            return ""
+
+        except Exception as e:
+            print(f"Failed to parse published time '{published}': {e}")
+            return ""
+
     def send_articles_batch(self, articles: List[Dict]) -> bool:
         """
         批量推送文章汇总（所有文章合并为1条推送）
@@ -120,12 +172,14 @@ class PushNotifier:
 
         # 遍历每篇文章
         for i, article in enumerate(articles, 1):
-            # 标题：包含公众号名和文章标题
+            # 标题：包含公众号名、文章标题和发布时间
             author = article.get('author', 'Unknown')
+            published_time = self._format_published_time(article.get('published', ''))
+
             if author and author != 'Unknown':
-                article_title = f"【{author}】{article['title']}"
+                article_title = f"【{author}】{article['title']}{published_time}"
             else:
-                article_title = article['title']
+                article_title = f"{article['title']}{published_time}"
 
             content += f"### {i}. {article_title}\n"
 

@@ -24,37 +24,55 @@ class AISummarizer:
         self.model = model
         self.max_tokens = max_tokens
 
-    def generate_summary(self, article: Dict, prompt_template: str = None) -> str:
+    def generate_summary(self, article: Dict, prompt_template: str = None) -> Dict:
         """
-        生成单篇文章深度总结
+        生成单篇文章深度总结（包含分类标签）
 
         Args:
             article: 文章信息（包含 title, content）
             prompt_template: 自定义提示词模板
 
         Returns:
-            总结文本
+            {
+                "summary": "总结文本",
+                "categories": ["标签1", "标签2", "标签3"]
+            }
         """
         # 使用默认提示词或自定义提示词
         if prompt_template is None:
             prompt_template = """请将以下公众号文章生成总结，要求：
 
-1. 结构化输出：使用 Emoji 图标作为段落标记（如🎯、🔄、🤖等）
-2. 分段清晰：每个大段有明确的主题标题
-3. 深度解析：不是简单摘要点，而是保留关键信息和数据的深度解析
-4. 格式规范：
+**分类标签**：
+1. 首先输出 3-5 个分类标签（关键词）
+2. 使用简洁的中文词汇（2-4个字）
+3. 标签之间用顿号分隔
+4. 标签应该反映文章的核心主题
+
+**文章总结**：
+5. 结构化输出：使用 Emoji 图标作为段落标记（如🎯、🔄、🤖等）
+6. 分段清晰：每个大段有明确的主题标题
+7. 深度解析：不是简单摘要点，而是保留关键信息和数据的深度解析
+8. 格式规范：
    - 使用分级标题（一、二、三）
    - 关键数据用加粗标记
    - 包含具体案例和细节
-5. 内容长度：控制在500字以内
-6. 补充细节：最后补充关键细节和背景信息
+9. 内容长度：控制在500字以内
+10. 补充细节：最后补充关键细节和背景信息
+
+**输出格式**：
+【标签】标签1、标签2、标签3
+
+【总结】
+（文章总结内容...）
+
+---
 
 文章标题：{title}
 
 文章内容：
 {content}
 
-请生成总结："""
+请按格式生成："""
 
         # 构建提示词
         prompt = prompt_template.format(
@@ -71,12 +89,61 @@ class AISummarizer:
             )
 
             if response.status_code == 200:
-                return response.output.text
+                ai_text = response.output.text
+                # 解析 AI 返回的内容，提取标签和摘要
+                return self._parse_ai_response(ai_text)
             else:
-                return f"API 错误: {response.code} - {response.message}"
+                return {
+                    "summary": f"API 错误: {response.code} - {response.message}",
+                    "categories": []
+                }
 
         except Exception as e:
-            return f"生成摘要失败: {str(e)}"
+            return {
+                "summary": f"生成摘要失败: {str(e)}",
+                "categories": []
+            }
+
+    def _parse_ai_response(self, ai_text: str) -> Dict:
+        """
+        解析 AI 返回的内容，提取标签和摘要
+
+        Args:
+            ai_text: AI 返回的完整文本
+
+        Returns:
+            {
+                "summary": "摘要内容",
+                "categories": ["标签1", "标签2"]
+            }
+        """
+        import re
+
+        # 尝试提取【标签】部分
+        categories = []
+        summary = ai_text
+
+        # 查找【标签】标记
+        tag_match = re.search(r'【标签】(.+?)(?:\n|$)', ai_text)
+        if tag_match:
+            tag_text = tag_match.group(1).strip()
+            # 解析标签（支持顿号、逗号分隔）
+            categories = re.split(r'[、,，\s]+', tag_text)
+            categories = list(set([c for c in categories if c.strip()]))
+            categories = categories[:5]  # 限制为 5 个
+
+        # 查找【总结】标记
+        summary_match = re.search(r'【总结】\s*\n(.+)', ai_text, re.DOTALL)
+        if summary_match:
+            summary = summary_match.group(1).strip()
+        else:
+            # 如果没有【总结】标记，去除【标签】部分
+            summary = re.sub(r'【标签】.+\n', '', ai_text).strip()
+
+        return {
+            "summary": summary,
+            "categories": categories
+        }
 
     def generate_simple_summary(self, article: Dict, noise_type: str) -> str:
         """

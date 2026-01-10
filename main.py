@@ -69,7 +69,7 @@ def main():
 
         print(f"Found {len(articles)} new articles.")
 
-        # 4. 分类文章
+        # 4. 分类文章（关键词匹配）
         print("\n[Step 4] Classifying articles...")
         for article in articles:
             classification = article_classifier.classify(article)
@@ -89,11 +89,14 @@ def main():
                 summary = ai_summarizer.generate_simple_summary(article, article['noise_type'])
                 article['summary'] = summary
                 print(f"  → Simple summary ({article['noise_type']})")
-            # 正常文章：生成完整总结（500字）
+            # 正常文章：生成完整总结（500字，包含分类标签）
             else:
-                summary = ai_summarizer.generate_summary(article)
-                article['summary'] = summary
-                print(f"  → Full summary")
+                result = ai_summarizer.generate_summary(article)
+                article['summary'] = result['summary']
+                # 如果 AI 生成了标签，使用 AI 的标签；否则保留关键词匹配的标签
+                if result['categories']:
+                    article['categories'] = result['categories']
+                print(f"  → Full summary with tags: {article['categories']}")
 
         print("Summaries generated successfully.")
 
