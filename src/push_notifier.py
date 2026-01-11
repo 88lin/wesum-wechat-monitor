@@ -196,7 +196,7 @@ class PushNotifier:
             else:
                 article_title = f"{article['title']}{published_time}"
 
-            content += f"### {i}. {article_title}\n"
+            content += f"### {i}. {article_title}\n\n"
 
             # 分类标签
             categories = article.get('categories', [])
@@ -206,6 +206,8 @@ class PushNotifier:
                 content += f"🏷️ {category_str}\n\n"
                 print(f"[DEBUG] Added tags to content: 🏷️ {category_str}")
             else:
+                # 没有标签时，添加空行保持格式一致
+                content += "\n"
                 print(f"[DEBUG] No tags found for article {i}")
 
             # 根据文章类型添加内容

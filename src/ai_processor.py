@@ -296,10 +296,13 @@ class AIArticleProcessor:
         # 提取【总结】部分
         summary_match = re.search(r'【总结】\s*\n(.+)', ai_text, re.DOTALL)
         if summary_match:
-            summary = summary_match.group(1).strip()
+            summary = summary_match.group(1)
+            # 只去除首尾空行，保留中间的段落结构
+            summary = summary.lstrip().rstrip()
         else:
             # 如果没有【总结】标记，去除【标签】部分
-            summary = re.sub(r'【标签】.+', '', ai_text).strip()
+            summary = re.sub(r'【标签】.+', '', ai_text)
+            summary = summary.lstrip().rstrip()
 
         return {
             "summary": summary,
