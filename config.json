@@ -2,57 +2,57 @@
   "rss_subscriptions": [
     {
       "name": "新智元",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/1f977d0059386d49693f1be76b2773f6d3380e1e.xml",
+      "url": "https://wec.zeabur.app/feed/1f977d0059386d49693f1be76b2773f6d3380e1e.xml",
       "enabled": true
     },
     {
       "name": "逛逛GitHub",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/d7274dc55951f1e0b834f60db01c293f82781e04.xml",
+      "url": "https://wec.zeabur.app/feed/d7274dc55951f1e0b834f60db01c293f82781e04.xml",
       "enabled": true
     },
     {
       "name": "数字生命卡兹克",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/b77ff48cc40245a2846a9dc98bdb58bfce9dff1c.xml",
+      "url": "https://wec.zeabur.app/feed/b77ff48cc40245a2846a9dc98bdb58bfce9dff1c.xml",
       "enabled": true
     },
     {
       "name": "量子位",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/43df61dc721c56c8bf0ad68e808bc986c57a9000.xml",
+      "url": "https://wec.zeabur.app/feed/43df61dc721c56c8bf0ad68e808bc986c57a9000.xml",
       "enabled": true
     },
     {
       "name": "Tech星球",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/c52254f3091479681b7408dfe68dcbc7eab24b11.xml",
+      "url": "https://wec.zeabur.app/feed/c52254f3091479681b7408dfe68dcbc7eab24b11.xml",
       "enabled": true
     },
     {
       "name": "硅星人Pro",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/2383fb2baa8997d9dc3b17f1909a83cfd6c2d06d.xml",
+      "url": "https://wec.zeabur.app/feed/2383fb2baa8997d9dc3b17f1909a83cfd6c2d06d.xml",
       "enabled": true
     },
     {
       "name": "AI产品榜",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/98f5e2532b707d80e06b19f585138355ac2ad89a.xml",
+      "url": "https://wec.zeabur.app/feed/98f5e2532b707d80e06b19f585138355ac2ad89a.xml",
       "enabled": true
     },
     {
       "name": "AI科技评论",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/abef684cb5915667676e9621e456e407f5ca5ac3.xml",
+      "url": "https://wec.zeabur.app/feed/abef684cb5915667676e9621e456e407f5ca5ac3.xml",
       "enabled": true
     },
     {
       "name": "机器之心",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/26a5c4068e226a48bc133c26dbc2e2ea2f3bbd33.xml",
+      "url": "https://wec.zeabur.app/feed/26a5c4068e226a48bc133c26dbc2e2ea2f3bbd33.xml",
       "enabled": true
     },
     {
       "name": "火星研究社",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/dfe263f42cd07f4f83829e483836c2d3ef159bf7.xml",
+      "url": "https://wec.zeabur.app/feed/dfe263f42cd07f4f83829e483836c2d3ef159bf7.xml",
       "enabled": true
     },
     {
       "name": "小睿睿投资学",
-      "url": "${WECHAT2RSS_DOMAIN}/feed/9853193513c15599f7ebb6d24349dcf9f6f67673.xml",
+      "url": "https://wec.zeabur.app/feed/9853193513c15599f7ebb6d24349dcf9f6f67673.xml",
       "enabled": true
     }
   ],

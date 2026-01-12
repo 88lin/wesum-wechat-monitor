@@ -32,12 +32,7 @@ jobs:
         DASHSCOPE_API_KEY=${{ secrets.QWEN_API_KEY }}
         WEBHOOK_URL=${{ secrets.WEBHOOK_URL }}
         GITHUB_TOKEN=${{ secrets.PERSONAL_GITHUB_TOKEN }}
-        WECHAT2RSS_DOMAIN=${{ secrets.WECHAT2RSS_DOMAIN }}
         EOF
-
-    - name: Replace placeholders in config.json
-      run: |
-        sed -i "s|\${WECHAT2RSS_DOMAIN}|${{ secrets.WECHAT2RSS_DOMAIN }}|g" config.json
 
     - name: Run WeSum
       run: python main.py
