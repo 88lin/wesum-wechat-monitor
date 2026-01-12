@@ -55,6 +55,10 @@ def load_subscriptions():
     从 config.json 加载公众号订阅配置
 
     优先级：config.json > 环境变量 > 默认配置
+
+    自动替换 URL 中的占位符：
+    - ${WECHAT2RSS_DOMAIN} → 环境变量 WECHAT2RSS_DOMAIN
+    - ${RSS_TOKEN} → 环境变量 RSS_TOKEN
     """
     # 方案 1: 从 config.json 加载（推荐）
     config_file = "config.json"
@@ -63,6 +67,22 @@ def load_subscriptions():
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
                 subscriptions = config.get("rss_subscriptions", [])
+
+                # 替换 URL 中的占位符
+                wechat2rss_domain = os.getenv("WECHAT2RSS_DOMAIN", "")
+                rss_token = os.getenv("RSS_TOKEN", "")
+
+                for sub in subscriptions:
+                    if "url" in sub:
+                        url = sub["url"]
+                        # 替换 ${WECHAT2RSS_DOMAIN}
+                        if "${WECHAT2RSS_DOMAIN}" in url and wechat2rss_domain:
+                            url = url.replace("${WECHAT2RSS_DOMAIN}", wechat2rss_domain)
+                        # 替换 ${RSS_TOKEN}
+                        if "${RSS_TOKEN}" in url and rss_token:
+                            url = url.replace("${RSS_TOKEN}", rss_token)
+                        sub["url"] = url
+
                 print(f"✅ 从 config.json 加载了 {len(subscriptions)} 个公众号配置")
                 return subscriptions
         except Exception as e:
