@@ -31,7 +31,7 @@ jobs:
         cat > .env << EOF
         DASHSCOPE_API_KEY=${{ secrets.QWEN_API_KEY }}
         WEBHOOK_URL=${{ secrets.WEBHOOK_URL }}
-        GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN=${{ secrets.PERSONAL_GITHUB_TOKEN }}
         WECHAT2RSS_DOMAIN=${{ secrets.WECHAT2RSS_DOMAIN }}
         RSS_TOKEN=${{ secrets.RSS_TOKEN }}
         EOF

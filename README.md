@@ -235,7 +235,7 @@ WeSum/
      - `WEBHOOK_URL`: 企业微信 Webhook URL
      - `WECHAT2RSS_DOMAIN`: Wechat2RSS 域名
      - `RSS_TOKEN`: Wechat2RSS Token
-     - `GITHUB_TOKEN`: GitHub Token（可选，用于 Gist）
+     - `PERSONAL_GITHUB_TOKEN`: GitHub Token（可选，用于 Gist）
 
 3. **启用 GitHub Actions**：
    - 进入 Actions 页面
