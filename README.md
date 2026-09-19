@@ -87,7 +87,7 @@ cp config.json.example config.json
 }
 ```
 
-**注意**：`config.json` 使用环境变量占位符（`${WECHAT2RSS_DOMAIN}` 和 `${RSS_TOKEN}`），实际值从 `.env` 文件读取。
+**注意**：`config.json` 使用环境变量占位符（`${WECHAT2RSS_DOMAIN}` 和 `${RSS_TOKEN}`），实际值从 `.env` 文件或 GitHub Secrets/Vars 读取。更换 RSS 实例时只需修改 `WECHAT2RSS_DOMAIN`，无需改动 config.json 中的每条订阅。
 
 **方式 2：使用环境变量（备用）**
 
@@ -124,6 +124,8 @@ python main.py
 | `DASHSCOPE_API_KEY` | 通义千问 API Key | ✅ |
 | `WEBHOOK_URL` | 企业微信 Webhook URL | ✅ |
 | `GITHUB_TOKEN` | GitHub Token（用于 Gist） | ❌ |
+| `WECHAT2RSS_DOMAIN` | Wechat2RSS 实例域名 | ✅ |
+| `RSS_TOKEN` | RSS 访问 Token（私有部署需要时） | ❌ |
 
 ### 公众号订阅配置（config.json）
 
@@ -231,6 +233,9 @@ WeSum/
      - `QWEN_API_KEY`: 通义千问 API Key
      - `WEBHOOK_URL`: 企业微信 Webhook URL
      - `PERSONAL_GITHUB_TOKEN`: GitHub Token（可选，用于 Gist）
+     - `RSS_TOKEN`: RSS 访问 Token（可选，私有部署需要时）
+   - 在同一页面的 **Variables** 标签添加：
+     - `WECHAT2RSS_DOMAIN`: Wechat2RSS 实例域名（未设置时默认 `wec.zeabur.app`）
 
 3. **启用 GitHub Actions**：
    - 进入 Actions 页面
@@ -292,6 +297,9 @@ WeSum/
 ### Q6: 为什么凌晨没有收到空消息通知？
 **A**: 系统设置了静默时段（0:00-9:00），这个时段内即使没有新文章也不会发送空消息，避免打扰休息。9:00 后会恢复正常推送。
 
+### Q7: RSS 拉取一直失败怎么办？
+**A**: 检查 `WECHAT2RSS_DOMAIN` 指向的 Wechat2RSS 实例是否可用（浏览器直接打开 `https://<域名>/feed/xxx.xml` 看是否返回内容）。自建实例下线后，换一个新实例只需更新 `WECHAT2RSS_DOMAIN`；如果新实例的 feed ID 不同，再对应更新 `config.json` 里的 feed 路径。
+
 ---
 
 ## 📝 License
@@ -309,5 +317,5 @@ MIT
 ---
 
 **开发者**：Jason + Claude Code
-**最后更新**：2026-01-13
-**版本**：v2.0
+**最后更新**：2026-09-20
+**版本**：v2.1

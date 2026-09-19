@@ -8,8 +8,9 @@ import sys
 import io
 import json
 import os
+import re
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 # 设置 stdout 编码为 UTF-8
@@ -48,6 +49,23 @@ RSS_TOKEN = os.getenv("RSS_TOKEN", "")
 # 已推送文章记录文件
 SEEN_ARTICLES_FILE = "data/seen_articles.json"
 
+# 记忆库上限（防止无限增长；远大于 max_hours 时间窗口，不会导致重复推送）
+MAX_SEEN_LINKS = 2000
+
+# 北京时间（UTC+8）
+CST = timezone(timedelta(hours=8))
+
+
+def substitute_env_vars(value: str) -> str:
+    """
+    替换字符串中的 ${VAR} 环境变量占位符
+
+    未定义（或为空）的占位符保持原样，便于上层检测并给出明确提示。
+    """
+    def _replace(match):
+        return os.getenv(match.group(1)) or match.group(0)
+    return re.sub(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}', _replace, value)
+
 # ==================== 公众号订阅配置 ====================
 
 def load_subscriptions():
@@ -64,6 +82,8 @@ def load_subscriptions():
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
                 subscriptions = config.get("rss_subscriptions", [])
+                for sub in subscriptions:
+                    sub['url'] = substitute_env_vars(sub.get('url', ''))
                 print(f"✅ 从 config.json 加载了 {len(subscriptions)} 个公众号配置")
                 return subscriptions
         except Exception as e:
@@ -214,6 +234,36 @@ class AIArticleProcessor:
         else:
             return None, None, []
 
+    def _call_model(self, prompt: str, max_tokens: int, temperature: float) -> str:
+        """
+        调用通义千问生成文本（messages 格式，DashScope 当前标准）
+
+        Returns:
+            模型输出文本；调用失败时返回空字符串
+        """
+        try:
+            response = Generation.call(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                result_format="message",
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+
+            if response.status_code == 200:
+                # message 格式：output.choices[0].message.content
+                choices = getattr(response.output, 'choices', None)
+                if choices:
+                    return (choices[0].message.content or "").strip()
+                # 兼容旧的 text 格式
+                return (getattr(response.output, 'text', '') or '').strip()
+
+            print(f"模型调用失败: HTTP {response.status_code} {getattr(response, 'code', '')} {getattr(response, 'message', '')}")
+        except Exception as e:
+            print(f"模型调用异常：{str(e)}")
+
+        return ""
+
     def generate_categories(self, title: str, content: str) -> List[str]:
         """生成文章分类标签（使用 AI）"""
         prompt = f"""请为以下文章生成2-3个分类标签。
@@ -228,20 +278,10 @@ class AIArticleProcessor:
 3. 常见标签包括：AI、科技、前端、产品、管理、算法、技术趋势等
 4. 直接返回标签，用顿号分隔，不要其他说明"""
 
-        try:
-            response = Generation.call(
-                model=self.model,
-                prompt=prompt,
-                max_tokens=100,
-                temperature=0.3
-            )
-
-            if response.status_code == 200:
-                categories_text = response.output.text.strip()
-                categories = [c.strip() for c in categories_text.split('、') if c.strip()]
-                return categories[:3]
-        except Exception as e:
-            print(f"分类生成失败：{str(e)}")
+        categories_text = self._call_model(prompt, max_tokens=100, temperature=0.3)
+        if categories_text:
+            categories = [c.strip() for c in categories_text.split('、') if c.strip()]
+            return categories[:3]
 
         return []
 
@@ -309,67 +349,62 @@ class AIArticleProcessor:
 关键细节和背景信息...
 """
 
-        try:
-            response = Generation.call(
-                model=self.model,
-                prompt=prompt,
-                max_tokens=1000,
-                temperature=0.5
-            )
+        ai_text = self._call_model(prompt, max_tokens=1000, temperature=0.5)
 
-            if response.status_code == 200:
-                ai_text = response.output.text.strip()
-
-                # 调试：打印 AI 原始返回的前 200 个字符
-                print(f"       [DEBUG] AI 原始返回（前200字符）:")
-                print(f"       {ai_text[:200]}...")
-
-                # 提取【总结】部分
-                import re
-                summary_match = re.search(r'【总结】\s*\n(.+)', ai_text, re.DOTALL)
-                if summary_match:
-                    summary = summary_match.group(1)
-                    summary = summary.lstrip().rstrip()
-                    return summary
-                else:
-                    # 如果没有【总结】标记，去除【标签】部分
-                    summary = re.sub(r'【标签】.+', '', ai_text)
-                    summary = summary.lstrip().rstrip()
-
-                    # 调试：检查是否提取成功
-                    if not summary or len(summary) < 50:
-                        print(f"       ⚠️  警告：摘要过短或为空，AI 可能未按预期生成")
-                        print(f"       [DEBUG] 完整 AI 返回:")
-                        print(f"       {ai_text}")
-                        return content[:500] + "..."
-
-                    return summary
-
-        except Exception as e:
-            print(f"摘要生成失败：{str(e)}")
+        if not ai_text:
             return content[:200] + "..."
 
-        return content[:200] + "..."
+        # 调试：打印 AI 原始返回的前 200 个字符
+        print(f"       [DEBUG] AI 原始返回（前200字符）:")
+        print(f"       {ai_text[:200]}...")
+
+        # 提取【总结】部分
+        summary_match = re.search(r'【总结】\s*\n(.+)', ai_text, re.DOTALL)
+        if summary_match:
+            summary = summary_match.group(1)
+            summary = summary.lstrip().rstrip()
+            return summary
+
+        # 如果没有【总结】标记，去除【标签】部分
+        summary = re.sub(r'【标签】.+', '', ai_text)
+        summary = summary.lstrip().rstrip()
+
+        # 调试：检查是否提取成功
+        if not summary or len(summary) < 50:
+            print(f"       ⚠️  警告：摘要过短或为空，AI 可能未按预期生成")
+            print(f"       [DEBUG] 完整 AI 返回:")
+            print(f"       {ai_text}")
+            return content[:500] + "..."
+
+        return summary
 
 
 # ==================== 辅助函数 ====================
 
-def load_seen_articles() -> set:
-    """加载已推送文章的链接集合"""
+def load_seen_articles() -> Dict[str, bool]:
+    """
+    加载已推送文章的链接集合
+
+    用 dict 的键保存链接（保持插入顺序，便于按时间裁剪旧记录），
+    `in` / `len()` 用法与 set 一致。
+    """
     if os.path.exists(SEEN_ARTICLES_FILE):
         with open(SEEN_ARTICLES_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            return set(data.get('seen_links', []))
-    return set()
+            return dict.fromkeys(data.get('seen_links', []))
+    return {}
 
 
-def save_seen_articles(seen_links: set):
-    """保存已推送文章的链接集合"""
+def save_seen_articles(seen_links: Dict[str, bool]):
+    """保存已推送文章的链接集合（超出上限时丢弃最早的记录）"""
     os.makedirs(os.path.dirname(SEEN_ARTICLES_FILE), exist_ok=True)
+    links = list(seen_links.keys())
+    if len(links) > MAX_SEEN_LINKS:
+        links = links[-MAX_SEEN_LINKS:]
     with open(SEEN_ARTICLES_FILE, 'w', encoding='utf-8') as f:
         json.dump({
-            'seen_links': list(seen_links),
-            'updated_at': datetime.now().isoformat()
+            'seen_links': links,
+            'updated_at': datetime.now(CST).isoformat()
         }, f, ensure_ascii=False, indent=2)
 
 
@@ -397,13 +432,14 @@ def format_published_time(published: str) -> str:
 def parse_published_time(published: str) -> datetime:
     """解析发布时间为 datetime 对象（用于排序）"""
     if not published or published == 'Unknown':
-        return datetime.min
+        # 返回带时区的最小时间，避免与带时区的发布时间比较时抛 TypeError
+        return datetime.min.replace(tzinfo=timezone.utc)
 
     try:
         from email.utils import parsedate_to_datetime
         return parsedate_to_datetime(published)
     except:
-        return datetime.min
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _is_within_time_range(entry, time_threshold: datetime) -> bool:
@@ -417,10 +453,11 @@ def _is_within_time_range(entry, time_threshold: datetime) -> bool:
 
         dt = parsedate_to_datetime(published_str)
 
-        # 如果 dt 有时区信息，将 time_threshold 也转换为带时区的时间
-        if dt.tzinfo is not None and time_threshold.tzinfo is None:
-            from datetime import timezone
-            time_threshold = time_threshold.replace(tzinfo=timezone.utc)
+        # 统一用带时区的时间比较，混合时区由 datetime 自动换算
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=CST)
+        if time_threshold.tzinfo is None:
+            time_threshold = time_threshold.astimezone()
 
         return dt >= time_threshold
     except:
@@ -440,12 +477,16 @@ def fetch_rss_articles(url, seen_links: set = None, max_hours: int = 24):
         文章列表
     """
     if seen_links is None:
-        seen_links = set()
+        seen_links = {}
+
+    if '${' in url:
+        print(f"❌ RSS 地址包含未解析的环境变量占位符：{url}")
+        print(f"   请在 .env 或 GitHub Secrets/Vars 中设置对应变量（如 WECHAT2RSS_DOMAIN）")
+        return []
 
     print(f"正在获取 RSS：{url}")
 
     import feedparser
-    import re
 
     try:
         feed = feedparser.parse(url)
@@ -589,7 +630,7 @@ def format_push_message_for_gist(articles, title="公众号文章摘要汇总"):
         完整的文章摘要文本（Markdown 格式）
     """
     # 使用北京时间（UTC+8）
-    now = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
+    now = datetime.now(CST).strftime('%Y-%m-%d %H:%M')
 
     # 统计公众号数量
     account_names = set(article.get('author', '') for article in articles if article.get('author'))
@@ -691,7 +732,7 @@ def send_to_wechat_with_gist_link(account_name, gist_url, webhook_url, articles)
         articles: 文章列表
     """
     # 使用北京时间（UTC+8）
-    now = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
+    now = datetime.now(CST).strftime('%Y-%m-%d %H:%M')
 
     # 构建简洁的文章列表（只包含标题和链接，最多显示10篇）
     article_list = ""
@@ -759,7 +800,7 @@ def send_no_new_articles_message(webhook_url):
         webhook_url: 企业微信 webhook 地址
     """
     # 使用北京时间（UTC+8）
-    now = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
+    now = datetime.now(CST).strftime('%Y-%m-%d %H:%M')
 
     message = {
         "msgtype": "markdown",
@@ -1004,7 +1045,7 @@ def main():
         # 8. 保存已推送文章记忆
         print("\n[Step 8] 保存已推送文章记忆...")
         for article in processed_articles:
-            seen_links.add(article['link'])
+            seen_links[article['link']] = True
         save_seen_articles(seen_links)
         print(f"   ✅ 已保存 {len(processed_articles)} 篇文章到记忆库")
         print(f"   📝 记忆文件: {SEEN_ARTICLES_FILE}")
