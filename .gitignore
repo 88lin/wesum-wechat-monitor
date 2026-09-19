@@ -7,6 +7,8 @@
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+venv/
 
 # 数据文件（用户运行时生成）
 # 注意：seen_articles.json 需要 GitHub Actions 自动更新，所以不排除

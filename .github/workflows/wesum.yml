@@ -11,6 +11,10 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch: # 允许手动触发
 
+concurrency:
+  group: wesum-runner
+  cancel-in-progress: false
+
 jobs:
   run-wesum:
     runs-on: ubuntu-latest
@@ -22,7 +26,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.12'
 
     - name: Install dependencies
       run: |
@@ -36,6 +40,8 @@ jobs:
         DASHSCOPE_API_KEY=${{ secrets.QWEN_API_KEY }}
         WEBHOOK_URL=${{ secrets.WEBHOOK_URL }}
         GITHUB_TOKEN=${{ secrets.PERSONAL_GITHUB_TOKEN }}
+        WECHAT2RSS_DOMAIN=${{ vars.WECHAT2RSS_DOMAIN || 'wec.zeabur.app' }}
+        RSS_TOKEN=${{ secrets.RSS_TOKEN }}
         EOF
 
     - name: Run WeSum
@@ -49,5 +55,5 @@ jobs:
         git add data/seen_articles.json || echo "No data file to commit"
         git add logs/ || echo "No logs to commit"
         git commit -m "chore: update seen articles [skip ci]" || echo "No changes to commit"
+        git pull --rebase origin ${GITHUB_REF_NAME}
         git push
-
