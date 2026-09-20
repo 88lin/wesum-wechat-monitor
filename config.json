@@ -2,78 +2,81 @@
   "rss_subscriptions": [
     {
       "name": "新智元",
-      "url": "https://${WECHAT2RSS_DOMAIN}/feed/1f977d0059386d49693f1be76b2773f6d3380e1e.xml",
-      "enabled": true
+      "url": "https://${WECHAT2RSS_DOMAIN}/feed/ede30346413ea70dbef5d485ea5cbb95cca446e7.xml",
+      "enabled": true,
+      "source": "wechat2rss 免费公开源"
     },
     {
       "name": "逛逛GitHub",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/d7274dc55951f1e0b834f60db01c293f82781e04.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "数字生命卡兹克",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/b77ff48cc40245a2846a9dc98bdb58bfce9dff1c.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "量子位",
-      "url": "https://${WECHAT2RSS_DOMAIN}/feed/43df61dc721c56c8bf0ad68e808bc986c57a9000.xml",
-      "enabled": true
+      "url": "https://${WECHAT2RSS_DOMAIN}/feed/7131b577c61365cb47e81000738c10d872685908.xml",
+      "enabled": true,
+      "source": "wechat2rss 免费公开源"
     },
     {
       "name": "Tech星球",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/c52254f3091479681b7408dfe68dcbc7eab24b11.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "硅星人Pro",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/2383fb2baa8997d9dc3b17f1909a83cfd6c2d06d.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "AI产品榜",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/98f5e2532b707d80e06b19f585138355ac2ad89a.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "AI科技评论",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/abef684cb5915667676e9621e456e407f5ca5ac3.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "机器之心",
-      "url": "https://${WECHAT2RSS_DOMAIN}/feed/26a5c4068e226a48bc133c26dbc2e2ea2f3bbd33.xml",
-      "enabled": true
+      "url": "https://${WECHAT2RSS_DOMAIN}/feed/51e92aad2728acdd1fda7314be32b16639353001.xml",
+      "enabled": true,
+      "source": "wechat2rss 免费公开源"
     },
     {
       "name": "火星研究社",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/dfe263f42cd07f4f83829e483836c2d3ef159bf7.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "小睿睿投资学",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/9853193513c15599f7ebb6d24349dcf9f6f67673.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "APPSO",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/9da805ac9714a8337326de325ef166f90c4373f7.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "IT之家",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/e99f8a1ccec104f8f12c2090e72dbc5a05e2074c.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "MindCode",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/51ff48a6706d9523dc869a0dc60c05b7f182dcee.xml",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "行业报告研究院",
       "url": "https://${WECHAT2RSS_DOMAIN}/feed/07a278f158b3bc8b3b39e64fac6352c595667230.xml",
-      "enabled": true
+      "enabled": false
     }
   ],
   "filters": {
