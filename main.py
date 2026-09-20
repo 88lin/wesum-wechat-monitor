@@ -20,10 +20,6 @@ from typing import Dict, List, Tuple
 if hasattr(sys.stdout, 'buffer'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
 
-# 通义千问 API
-import dashscope
-from dashscope import Generation
-
 # ==================== 配置加载 ====================
 
 # 从环境变量加载配置
@@ -33,10 +29,38 @@ try:
 except ImportError:
     pass  # python-dotenv 未安装，跳过
 
-# 通义千问 API Key（必需）
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
-if not DASHSCOPE_API_KEY:
-    raise ValueError("请设置环境变量 DASHSCOPE_API_KEY（在 .env 文件中）")
+# ==================== LLM 模型配置 ====================
+# 统一走 OpenAI 兼容接口（chat/completions），通义千问 / 智谱 GLM / OpenAI /
+# DeepSeek / Moonshot 等服务商均可直接使用，也可指向任意兼容端点。
+
+# 服务商预设：LLM_PROVIDER 环境变量的合法取值 → OpenAI 兼容端点
+LLM_PROVIDER_PRESETS = {
+    "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",  # 阿里云百炼（通义千问/Qwen）
+    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",  # 智谱 AI（GLM 系列）
+    "glm": "https://open.bigmodel.cn/api/paas/v4",
+    "openai": "https://api.openai.com/v1",  # OpenAI（GPT 系列）
+    "deepseek": "https://api.deepseek.com/v1",  # DeepSeek
+    "moonshot": "https://api.moonshot.cn/v1",  # Moonshot（Kimi）
+}
+
+# 默认使用阿里云百炼（兼容旧版仅支持通义千问的配置）
+DEFAULT_LLM_BASE_URL = LLM_PROVIDER_PRESETS["dashscope"]
+
+# API Key：LLM_API_KEY 优先；兼容旧配置的 DASHSCOPE_API_KEY（必需）
+LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+if not LLM_API_KEY:
+    raise ValueError("请设置环境变量 LLM_API_KEY（或旧变量 DASHSCOPE_API_KEY），见 .env.example")
+
+# 服务端点：LLM_BASE_URL 直接指定 > LLM_PROVIDER 预设 > 默认（阿里云百炼）
+LLM_BASE_URL = (
+    os.getenv("LLM_BASE_URL")
+    or LLM_PROVIDER_PRESETS.get((os.getenv("LLM_PROVIDER") or "").strip().lower())
+    or DEFAULT_LLM_BASE_URL
+).rstrip("/")
+
+# 模型名称（以各服务商文档中的模型 ID 为准）
+WECHAT_MODEL = os.getenv("WECHAT_MODEL") or "qwen-plus"
 
 # 企业微信 Webhook URL（必需）
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
@@ -145,9 +169,10 @@ RSS_SUBSCRIPTIONS = load_subscriptions()
 class AIArticleProcessor:
     """AI 文章处理器"""
 
-    def __init__(self, api_key: str, model: str = "qwen-plus"):
-        dashscope.api_key = api_key
-        self.model = model
+    def __init__(self, api_key: str, model: str = None, base_url: str = None):
+        self.api_key = api_key
+        self.model = model or WECHAT_MODEL
+        self.base_url = (base_url or LLM_BASE_URL).rstrip("/")
         self.noise_keywords = self._default_noise_keywords()
 
     def _default_noise_keywords(self) -> Dict[str, List[str]]:
@@ -251,38 +276,44 @@ class AIArticleProcessor:
 
     def _call_model(self, prompt: str, max_tokens: int, temperature: float, max_retries: int = 3) -> str:
         """
-        调用通义千问生成文本（messages 格式，DashScope 当前标准）
+        调用 LLM 生成文本（OpenAI 兼容 chat/completions 接口）
 
         对限流和服务端错误做有限次重试；认证/参数类错误不重试。
 
         Returns:
             模型输出文本；调用失败时返回空字符串
         """
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False
+        }
+
         for attempt in range(max_retries):
+            retryable = True
             try:
-                response = Generation.call(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    result_format="message",
-                    max_tokens=max_tokens,
-                    temperature=temperature
-                )
+                response = requests.post(url, json=payload, headers=headers, timeout=60)
 
                 if response.status_code == 200:
-                    # message 格式：output.choices[0].message.content
-                    choices = getattr(response.output, 'choices', None)
+                    data = response.json()
+                    choices = data.get("choices") or []
                     if choices:
-                        return (choices[0].message.content or "").strip()
-                    # 兼容旧的 text 格式
-                    return (getattr(response.output, 'text', '') or '').strip()
+                        return ((choices[0].get("message") or {}).get("content") or "").strip()
+                    print("模型调用失败: 响应中没有 choices")
+                    return ""
 
-                status = response.status_code
-                print(f"模型调用失败: HTTP {status} {getattr(response, 'code', '')} {getattr(response, 'message', '')}")
+                print(f"模型调用失败: HTTP {response.status_code} {response.text[:200]}")
                 # 限流/服务端错误可重试，认证/参数错误重试无意义
-                retryable = status == 429 or status >= 500
+                retryable = response.status_code == 429 or response.status_code >= 500
             except Exception as e:
                 print(f"模型调用异常：{str(e)}")
-                retryable = True
 
             if not retryable or attempt == max_retries - 1:
                 break
@@ -1082,11 +1113,8 @@ def main():
     print("=" * 60)
     print()
 
-    # 创建 AI 处理器（模型可用环境变量 WECHAT_MODEL 覆盖）
-    ai_processor = AIArticleProcessor(
-        api_key=DASHSCOPE_API_KEY,
-        model=os.getenv("WECHAT_MODEL", "qwen-plus")
-    )
+    # 创建 AI 处理器（模型/服务商由 LLM_* 环境变量决定，默认阿里云百炼 qwen-plus）
+    ai_processor = AIArticleProcessor(api_key=LLM_API_KEY)
 
     processed_articles = []
 
