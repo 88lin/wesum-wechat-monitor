@@ -9,9 +9,12 @@ import io
 import json
 import os
 import re
+import time
+import html
 import requests
+import feedparser
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 # 设置 stdout 编码为 UTF-8
 if hasattr(sys.stdout, 'buffer'):
@@ -68,12 +71,21 @@ def substitute_env_vars(value: str) -> str:
 
 # ==================== 公众号订阅配置 ====================
 
+# 过滤配置默认值（可被 config.json 的 filters 字段覆盖）
+RSS_FILTERS = {
+    "max_hours": 24,            # 只处理最近 N 小时的文章
+    "max_articles_per_run": None  # 每轮最多处理的文章数（None 不限制）
+}
+
 def load_subscriptions():
     """
     从 config.json 加载公众号订阅配置
 
     优先级：config.json > 环境变量 > 默认配置
+    同时读取 filters 字段更新 RSS_FILTERS。
     """
+    global RSS_FILTERS
+
     # 方案 1: 从 config.json 加载（推荐）
     config_file = "config.json"
 
@@ -84,6 +96,9 @@ def load_subscriptions():
                 subscriptions = config.get("rss_subscriptions", [])
                 for sub in subscriptions:
                     sub['url'] = substitute_env_vars(sub.get('url', ''))
+                filters = config.get("filters")
+                if isinstance(filters, dict):
+                    RSS_FILTERS.update(filters)
                 print(f"✅ 从 config.json 加载了 {len(subscriptions)} 个公众号配置")
                 return subscriptions
         except Exception as e:
@@ -234,60 +249,72 @@ class AIArticleProcessor:
         else:
             return None, None, []
 
-    def _call_model(self, prompt: str, max_tokens: int, temperature: float) -> str:
+    def _call_model(self, prompt: str, max_tokens: int, temperature: float, max_retries: int = 3) -> str:
         """
         调用通义千问生成文本（messages 格式，DashScope 当前标准）
+
+        对限流和服务端错误做有限次重试；认证/参数类错误不重试。
 
         Returns:
             模型输出文本；调用失败时返回空字符串
         """
-        try:
-            response = Generation.call(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                result_format="message",
-                max_tokens=max_tokens,
-                temperature=temperature
-            )
+        for attempt in range(max_retries):
+            try:
+                response = Generation.call(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    result_format="message",
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                )
 
-            if response.status_code == 200:
-                # message 格式：output.choices[0].message.content
-                choices = getattr(response.output, 'choices', None)
-                if choices:
-                    return (choices[0].message.content or "").strip()
-                # 兼容旧的 text 格式
-                return (getattr(response.output, 'text', '') or '').strip()
+                if response.status_code == 200:
+                    # message 格式：output.choices[0].message.content
+                    choices = getattr(response.output, 'choices', None)
+                    if choices:
+                        return (choices[0].message.content or "").strip()
+                    # 兼容旧的 text 格式
+                    return (getattr(response.output, 'text', '') or '').strip()
 
-            print(f"模型调用失败: HTTP {response.status_code} {getattr(response, 'code', '')} {getattr(response, 'message', '')}")
-        except Exception as e:
-            print(f"模型调用异常：{str(e)}")
+                status = response.status_code
+                print(f"模型调用失败: HTTP {status} {getattr(response, 'code', '')} {getattr(response, 'message', '')}")
+                # 限流/服务端错误可重试，认证/参数错误重试无意义
+                retryable = status == 429 or status >= 500
+            except Exception as e:
+                print(f"模型调用异常：{str(e)}")
+                retryable = True
+
+            if not retryable or attempt == max_retries - 1:
+                break
+            wait = 2 * (attempt + 1)
+            print(f"   {wait}s 后重试（第 {attempt + 2}/{max_retries} 次）...")
+            time.sleep(wait)
 
         return ""
 
-    def generate_categories(self, title: str, content: str) -> List[str]:
-        """生成文章分类标签（使用 AI）"""
-        prompt = f"""请为以下文章生成2-3个分类标签。
-
-标题：{title}
-
-内容：{content}
-
-要求：
-1. 标签要简洁，2-4个字
-2. 标签要准确反映文章主题
-3. 常见标签包括：AI、科技、前端、产品、管理、算法、技术趋势等
-4. 直接返回标签，用顿号分隔，不要其他说明"""
-
-        categories_text = self._call_model(prompt, max_tokens=100, temperature=0.3)
-        if categories_text:
-            categories = [c.strip() for c in categories_text.split('、') if c.strip()]
-            return categories[:3]
-
-        return []
-
-    def summarize_article(self, content: str, title: str = "", author: str = "") -> str:
+    def _parse_summary_sections(self, ai_text: str) -> Tuple[str, List[str]]:
         """
-        使用 AI 生成文章摘要
+        从模型输出中解析【标签】和【总结】两部分
+
+        Returns:
+            (summary, categories)
+        """
+        categories = []
+        tag_match = re.search(r'【标签】\s*([^\n]+)', ai_text)
+        if tag_match:
+            categories = [t.strip() for t in re.split(r'[、,，\s]+', tag_match.group(1)) if t.strip()][:5]
+
+        summary_match = re.search(r'【总结】\s*\n(.+)', ai_text, re.DOTALL)
+        if summary_match:
+            return summary_match.group(1).lstrip().rstrip(), categories
+
+        # 没有【总结】标记时，去掉【标签】行后整体作为摘要
+        summary = re.sub(r'【标签】[^\n]*', '', ai_text).lstrip().rstrip()
+        return summary, categories
+
+    def summarize_article(self, content: str, title: str = "", author: str = "") -> Tuple[str, List[str]]:
+        """
+        使用 AI 生成文章摘要和分类标签（单次调用）
 
         Args:
             content: 文章内容
@@ -295,7 +322,7 @@ class AIArticleProcessor:
             author: 公众号名称（可选）
 
         Returns:
-            摘要文本
+            (摘要文本, 分类标签列表)
         """
         # 截取内容（避免超出 token 限制）
         if len(content) > 4000:
@@ -352,31 +379,21 @@ class AIArticleProcessor:
         ai_text = self._call_model(prompt, max_tokens=1000, temperature=0.5)
 
         if not ai_text:
-            return content[:200] + "..."
+            return content[:200] + "...", []
 
         # 调试：打印 AI 原始返回的前 200 个字符
         print(f"       [DEBUG] AI 原始返回（前200字符）:")
         print(f"       {ai_text[:200]}...")
 
-        # 提取【总结】部分
-        summary_match = re.search(r'【总结】\s*\n(.+)', ai_text, re.DOTALL)
-        if summary_match:
-            summary = summary_match.group(1)
-            summary = summary.lstrip().rstrip()
-            return summary
+        summary, categories = self._parse_summary_sections(ai_text)
 
-        # 如果没有【总结】标记，去除【标签】部分
-        summary = re.sub(r'【标签】.+', '', ai_text)
-        summary = summary.lstrip().rstrip()
-
-        # 调试：检查是否提取成功
         if not summary or len(summary) < 50:
             print(f"       ⚠️  警告：摘要过短或为空，AI 可能未按预期生成")
             print(f"       [DEBUG] 完整 AI 返回:")
             print(f"       {ai_text}")
-            return content[:500] + "..."
+            return content[:500] + "...", categories
 
-        return summary
+        return summary, categories
 
 
 # ==================== 辅助函数 ====================
@@ -464,9 +481,45 @@ def _is_within_time_range(entry, time_threshold: datetime) -> bool:
         return False  # 解析失败时默认过滤
 
 
-def fetch_rss_articles(url, seen_links: set = None, max_hours: int = 24):
+def _clean_content(raw: str) -> str:
+    """去除 HTML 标签、反转义 HTML 实体、压缩空白，保留纯文本"""
+    text = html.unescape(re.sub(r'<[^>]+>', '', raw or ''))
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _fetch_feed(url: str, max_retries: int = 2):
     """
-    从 Zeabur 获取 RSS 文章列表（带记忆机制）
+    下载 RSS 内容并交给 feedparser 解析
+
+    feedparser 自带抓取没有超时，慢源会挂死整个任务；
+    这里改用 requests（带超时），失败时有限重试。
+
+    Returns:
+        feedparser 解析结果；下载失败返回 None
+    """
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(
+                url,
+                timeout=15,
+                headers={"User-Agent": "WeSum/2.2 (+https://github.com/88lin/wesum-wechat-monitor)"}
+            )
+            resp.raise_for_status()
+            return feedparser.parse(resp.content)
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries - 1:
+                print(f"   获取失败（{str(e)}），2s 后重试...")
+                time.sleep(2)
+
+    print(f"❌ 获取 RSS 失败：{str(last_err)}")
+    return None
+
+
+def fetch_rss_articles(url, seen_links: Dict[str, bool] = None, max_hours: int = 24) -> Tuple[list, int]:
+    """
+    获取 RSS 文章列表（带记忆机制）
 
     Args:
         url: RSS 地址
@@ -474,7 +527,7 @@ def fetch_rss_articles(url, seen_links: set = None, max_hours: int = 24):
         max_hours: 只获取最近 N 小时内的文章（默认24小时）
 
     Returns:
-        文章列表
+        (文章列表, RSS 源返回的总条目数)；总条目数用于判断源是否失效
     """
     if seen_links is None:
         seen_links = {}
@@ -482,14 +535,15 @@ def fetch_rss_articles(url, seen_links: set = None, max_hours: int = 24):
     if '${' in url:
         print(f"❌ RSS 地址包含未解析的环境变量占位符：{url}")
         print(f"   请在 .env 或 GitHub Secrets/Vars 中设置对应变量（如 WECHAT2RSS_DOMAIN）")
-        return []
+        return [], 0
 
     print(f"正在获取 RSS：{url}")
 
-    import feedparser
+    feed = _fetch_feed(url)
+    if feed is None:
+        return [], 0
 
     try:
-        feed = feedparser.parse(url)
         time_threshold = datetime.now() - timedelta(hours=max_hours)
 
         # 基本信息
@@ -532,9 +586,8 @@ def fetch_rss_articles(url, seen_links: set = None, max_hours: int = 24):
             elif hasattr(entry, 'description'):
                 article['content'] = entry.description
 
-            # 去除 HTML 标签，保留纯文本
-            article['content'] = re.sub(r'<[^>]+>', '', article['content'])
-            # 限制内容长度
+            # 清洗为纯文本并限制长度
+            article['content'] = _clean_content(article['content'])
             if len(article['content']) > 2000:
                 article['content'] = article['content'][:2000]
 
@@ -552,11 +605,11 @@ def fetch_rss_articles(url, seen_links: set = None, max_hours: int = 24):
         print(f"      - 超时（跳过）：{skipped_time}")
         print(f"      - 新文章：{new_count}")
         print(f"   ✅ 获取到 {new_count} 篇新文章")
-        return articles
+        return articles, len(feed.entries)
 
     except Exception as e:
-        print(f"❌ 获取 RSS 失败：{str(e)}")
-        return []
+        print(f"❌ 解析 RSS 失败：{str(e)}")
+        return [], 0
 
 
 # ==================== Gist 相关函数 ====================
@@ -721,23 +774,13 @@ def format_push_message_for_gist(articles, title="公众号文章摘要汇总"):
 
 # ==================== 企业微信推送函数 ====================
 
-def send_to_wechat_with_gist_link(account_name, gist_url, webhook_url, articles):
-    """
-    发送企业微信卡片消息（包含文章列表和 Gist 链接）
+# 企业微信 markdown 消息上限 4096 字节，留余量
+WECOM_MAX_BYTES = 4000
 
-    Args:
-        account_name: 公众号名称
-        gist_url: Gist 链接
-        webhook_url: 企业微信 webhook 地址
-        articles: 文章列表
-    """
-    # 使用北京时间（UTC+8）
-    now = datetime.now(CST).strftime('%Y-%m-%d %H:%M')
 
-    # 构建简洁的文章列表（只包含标题和链接，最多显示10篇）
+def _build_wecom_digest(account_name, gist_url, articles, display_count, now):
+    """构建企业微信摘要卡片内容（display_count 控制列表条数以便裁剪长度）"""
     article_list = ""
-    display_count = min(10, len(articles))  # 最多显示10篇
-
     for i in range(display_count):
         article = articles[i]
         published_time = format_published_time(article.get('published', ''))
@@ -745,22 +788,21 @@ def send_to_wechat_with_gist_link(account_name, gist_url, webhook_url, articles)
         author_tag = f"【{author}】" if author else ""
         article_list += f"{i+1}. {author_tag}[{article['title']}]({article['link']}){published_time}\n"
 
-    # 如果文章超过10篇，添加省略号提示
-    if len(articles) > 10:
-        article_list += f"\n... 还有 {len(articles) - 10} 篇文章\n"
-        article_list += f"\n👉 **[点击查看完整摘要]({gist_url})**\n"
+    hidden = len(articles) - display_count
+    if hidden > 0:
+        article_list += f"\n... 还有 {hidden} 篇文章未显示\n"
 
-    message = {
-        "msgtype": "markdown",
-        "markdown": {
-            "content": f"""# 📰 公众号文章更新
+    if gist_url:
+        digest_link = f"\n👉 **[点击查看完整摘要]({gist_url})**\n"
+    else:
+        digest_link = "\n> ⚠️ 未配置 GITHUB_TOKEN，本次仅推送标题列表\n"
+
+    return f"""# 📰 公众号文章更新
 
 **公众号**: {account_name}
 **更新时间**: {now}
 **文章数量**: {len(articles)} 篇
-
-👉 **[点击查看完整摘要]({gist_url})**
-
+{digest_link}
 ----
 **📝 文章列表**:
 -{article_list}
@@ -768,6 +810,34 @@ def send_to_wechat_with_gist_link(account_name, gist_url, webhook_url, articles)
 ----
 <font color="info">WeSum AI 摘要助手</font>
 """
+
+
+def send_to_wechat_with_gist_link(account_name, gist_url, webhook_url, articles):
+    """
+    发送企业微信卡片消息（包含文章列表，可选 Gist 链接）
+
+    Args:
+        account_name: 公众号名称
+        gist_url: Gist 链接（可为 None，此时仅推送标题列表）
+        webhook_url: 企业微信 webhook 地址
+        articles: 文章列表
+    """
+    # 使用北京时间（UTC+8）
+    now = datetime.now(CST).strftime('%Y-%m-%d %H:%M')
+
+    # 逐步减少列表条数，确保不超企业微信 4096 字节限制
+    display_count = min(10, len(articles))  # 最多显示10篇
+    content = _build_wecom_digest(account_name, gist_url, articles, display_count, now)
+    while len(content.encode('utf-8')) > WECOM_MAX_BYTES and display_count > 1:
+        display_count -= 1
+        content = _build_wecom_digest(account_name, gist_url, articles, display_count, now)
+    if len(content.encode('utf-8')) > WECOM_MAX_BYTES:
+        content = content.encode('utf-8')[:WECOM_MAX_BYTES].decode('utf-8', errors='ignore') + '…'
+
+    message = {
+        "msgtype": "markdown",
+        "markdown": {
+            "content": content
         }
     }
 
@@ -837,6 +907,64 @@ def send_no_new_articles_message(webhook_url):
         return False
 
 
+def send_rss_source_warning_message(webhook_url, dead_feeds):
+    """
+    发送 RSS 源失效告警
+
+    所有订阅源都返回 0 条内容时，大概率是 RSS 实例下线或 feed 路径失效，
+    而不是"恰好没有新文章"——这种静默失效曾让本项目停摆 8 个月。
+
+    Args:
+        webhook_url: 企业微信 webhook 地址
+        dead_feeds: 返回 0 条内容的公众号名称列表
+    """
+    # 使用北京时间（UTC+8）
+    now = datetime.now(CST).strftime('%Y-%m-%d %H:%M')
+    feed_names = "、".join(dead_feeds[:10])
+    if len(dead_feeds) > 10:
+        feed_names += f" 等 {len(dead_feeds)} 个"
+
+    message = {
+        "msgtype": "markdown",
+        "markdown": {
+            "content": f"""# ⚠️ WeSum RSS 源疑似失效
+
+**更新时间**: {now}
+
+所有订阅源均返回 0 条内容，可能原因：
+
+1. `WECHAT2RSS_DOMAIN` 指向的实例已下线
+2. `config.json` 中的 feed 路径失效
+
+**受影响公众号**：{feed_names}
+
+> 请检查 RSS 源并更新配置，否则将无法收到文章推送。
+<font color="warning">WeSum AI 摘要助手</font>
+"""
+        }
+    }
+
+    try:
+        print(f"📤 正在发送 RSS 源失效告警...")
+        response = requests.post(webhook_url, json=message, timeout=10)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('errcode') == 0:
+                print(f"✅ 告警发送成功!")
+                return True
+            else:
+                print(f"❌ 告警发送失败: {result.get('errmsg')}")
+                return False
+        else:
+            print(f"❌ 企业微信 API 错误: HTTP {response.status_code}")
+            return False
+
+    except Exception as e:
+        print(f"❌ 发送告警时发生错误: {str(e)}")
+        return False
+
+
 # ==================== 主程序 ====================
 
 def main():
@@ -881,21 +1009,39 @@ def main():
     # 3. 从多个公众号获取文章
     print("[Step 3] 从多个公众号获取新文章...")
     all_articles = []
+    dead_feeds = []       # 返回 0 条内容的订阅（源可能失效）
+    total_entries = 0     # 所有源返回的总条目数
+
+    max_hours = int(RSS_FILTERS.get("max_hours") or 24)
+    print(f"   过滤配置：最近 {max_hours} 小时，每轮最多 "
+          f"{RSS_FILTERS.get('max_articles_per_run') or '不限'} 篇")
 
     for subscription in active_subscriptions:
         account_name = subscription['name']
         rss_url = subscription['url']
 
         print(f"\n正在获取【{account_name}】的文章...")
-        articles = fetch_rss_articles(rss_url, seen_links=seen_links, max_hours=24)
+        articles, feed_entries = fetch_rss_articles(rss_url, seen_links=seen_links, max_hours=max_hours)
+        total_entries += feed_entries
 
         if articles:
             all_articles.extend(articles)
+        elif feed_entries == 0:
+            dead_feeds.append(account_name)
+            print(f"   ⚠️ 该源返回 0 条内容（源可能已失效）")
         else:
             print(f"   ⚠️ 无新文章")
 
     if not all_articles:
         print("\n❌ 没有获取到任何新文章")
+
+        # 所有源都返回 0 条 → RSS 源疑似失效，而不是"恰好没有新文章"
+        if total_entries == 0 and dead_feeds:
+            print(f"\n🚨 所有 RSS 源均返回 0 条内容，疑似源失效！受影响：{'、'.join(dead_feeds)}")
+            print("   请检查 WECHAT2RSS_DOMAIN 指向的实例是否可用，以及 config.json 中的 feed 路径是否有效")
+            send_rss_source_warning_message(WEBHOOK_URL, dead_feeds)
+            print("\n❌ 运行失败（RSS 源疑似失效）")
+            exit(1)
 
         # 检查当前时间是否在静默时段（0-9点）
         current_hour = datetime.now().hour
@@ -909,18 +1055,38 @@ def main():
         print("\n✅ 运行完成（无新文章需要处理）")
         exit(0)
 
+    # 同一篇文章出现在多个订阅时只处理一次
+    unique_links = set()
+    deduped_articles = []
+    for article in all_articles:
+        if article['link'] and article['link'] in unique_links:
+            continue
+        unique_links.add(article['link'])
+        deduped_articles.append(article)
+    all_articles = deduped_articles
+
     print(f"\n📊 总计获取 {len(all_articles)} 篇新文章")
 
     # 4. 按发布时间降序排序
     print("\n[Step 4] 按发布时间降序排序...")
     all_articles.sort(key=lambda a: parse_published_time(a.get('published', '')), reverse=True)
     print(f"   ✅ 排序完成")
+
+    # 每轮处理数量上限（未处理的文章不记入记忆，下次运行继续）
+    max_per_run = RSS_FILTERS.get("max_articles_per_run")
+    if max_per_run and len(all_articles) > int(max_per_run):
+        print(f"   ✂️ 每轮上限 {int(max_per_run)} 篇，剩余 {len(all_articles) - int(max_per_run)} 篇留待下次运行")
+        all_articles = all_articles[:int(max_per_run)]
+
     print()
     print("=" * 60)
     print()
 
-    # 创建 AI 处理器
-    ai_processor = AIArticleProcessor(api_key=DASHSCOPE_API_KEY)
+    # 创建 AI 处理器（模型可用环境变量 WECHAT_MODEL 覆盖）
+    ai_processor = AIArticleProcessor(
+        api_key=DASHSCOPE_API_KEY,
+        model=os.getenv("WECHAT_MODEL", "qwen-plus")
+    )
 
     processed_articles = []
 
@@ -932,7 +1098,7 @@ def main():
         print()
 
         # 步骤 1: 干扰文章识别
-        print("  [1/3] 识别干扰内容...")
+        print("  [1/2] 识别干扰内容...")
         noise_level, noise_type, matched_keywords = ai_processor.detect_noise(
             article['title'],
             article['content']
@@ -952,22 +1118,15 @@ def main():
             print()
             continue
 
-        # 步骤 2: 生成分类标签
-        print("  [2/3] 生成分类标签...")
-        categories = ai_processor.generate_categories(
-            article['title'],
-            article['content']
-        )
-        article['categories'] = categories
-        print(f"       标签：{'、'.join(categories) if categories else '未生成'}")
-
-        # 步骤 3: 生成 AI 摘要
-        print("  [3/3] 生成 AI 摘要...")
-        summary = ai_processor.summarize_article(
+        # 步骤 2: 单次调用生成摘要 + 分类标签
+        print("  [2/2] 生成 AI 摘要与分类...")
+        summary, categories = ai_processor.summarize_article(
             article['content'],
             article['title']
         )
         article['ai_summary'] = summary
+        article['categories'] = categories
+        print(f"       标签：{'、'.join(categories) if categories else '未生成'}")
         print(f"       ✅ 摘要生成完成")
 
         # 打印完整的 AI 摘要内容（便于调试）
@@ -1005,17 +1164,22 @@ def main():
     print(f"内容长度: {len(gist_content)} 字符")
     print()
 
-    # 创建 GitHub Gist
+    # 创建 GitHub Gist（可选：未配置 token 时降级为仅标题列表推送）
     print("=" * 60)
     print("创建 GitHub Gist")
     print("=" * 60)
     print()
 
-    gist_url = create_gist(gist_content, summary_title, GITHUB_TOKEN)
+    if GITHUB_TOKEN:
+        gist_url = create_gist(gist_content, summary_title, GITHUB_TOKEN)
 
-    if not gist_url:
-        print("❌ Gist 创建失败，终止流程")
-        exit(1)
+        if not gist_url:
+            # Gist 失败通常是暂时性问题；本轮终止，文章不记入记忆，下次运行自动重试
+            print("❌ Gist 创建失败，终止流程（文章将留待下次运行重试）")
+            exit(1)
+    else:
+        print("⚠️ 未配置 GITHUB_TOKEN，跳过 Gist，降级为仅标题列表推送")
+        gist_url = None
 
     print()
 

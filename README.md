@@ -123,9 +123,10 @@ python main.py
 |--------|------|------|
 | `DASHSCOPE_API_KEY` | 通义千问 API Key | ✅ |
 | `WEBHOOK_URL` | 企业微信 Webhook URL | ✅ |
-| `GITHUB_TOKEN` | GitHub Token（用于 Gist） | ❌ |
+| `GITHUB_TOKEN` | GitHub Token（用于 Gist；未配置时降级为仅标题列表推送） | ❌ |
 | `WECHAT2RSS_DOMAIN` | Wechat2RSS 实例域名 | ✅ |
 | `RSS_TOKEN` | RSS 访问 Token（私有部署需要时） | ❌ |
+| `WECHAT_MODEL` | 通义千问模型（默认 `qwen-plus`，可选 `qwen-max` 等） | ❌ |
 
 ### 公众号订阅配置（config.json）
 
@@ -154,6 +155,11 @@ python main.py
 }
 ```
 
+`filters` 字段说明：
+
+- `max_hours`：只处理最近 N 小时内发布的文章（默认 24）
+- `max_articles_per_run`：每轮最多处理的文章数，超出的按发布时间取最新的一批，其余留待下次运行（`null` 表示不限制）
+
 **备用方案**：使用环境变量配置公众号（见"快速开始"部分）
 
 ---
@@ -174,6 +180,16 @@ python main.py
 - 即使没有新文章也会发送运行确认
 - 方便监控定时任务是否正常运行
 - **静默时段**：0:00-9:00 不发送空消息，避免打扰休息
+
+### RSS 源失效告警
+- 所有订阅源返回 0 条内容时，发送"源疑似失效"告警并让运行失败（Actions 页面可见红叉）
+- 避免源静默下线后毫无感知
+
+### 智能容错
+- RSS 拉取带 15s 超时和自动重试，慢源不会挂死定时任务
+- AI 调用对限流/服务端错误自动重试
+- 企业微信消息自动裁剪，不会超 4096 字节上限
+- 未配置 GitHub Token 时自动降级为仅标题列表推送
 
 ### 时区修复
 - 正确处理 RSS 时区（+0800）
@@ -318,4 +334,4 @@ MIT
 
 **开发者**：Jason + Claude Code
 **最后更新**：2026-09-20
-**版本**：v2.1
+**版本**：v2.2
